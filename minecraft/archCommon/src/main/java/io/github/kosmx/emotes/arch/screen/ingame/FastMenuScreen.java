@@ -21,10 +21,14 @@ import java.util.UUID;
 
 public class FastMenuScreen extends EmoteConfigScreen {
 
+    // ── logo ─────────────────────────────────────────────────────────
+    // วางไฟล์ที่: archCommon/src/main/resources/assets/emotecraft/textures/gui/celestoria_logo.png
+    private static final ResourceLocation LOGO = new ResourceLocation("emotecraft", "textures/gui/celestoria_logo.png");
+
     // ── layout ──────────────────────────────────────────────────────
     private static final int PANEL_W        = 230;
-    private static final int ITEM_H         = 26;   // สูงขึ้นนิดเพื่อให้รูปพอดี
-    private static final int ICON_SIZE      = 18;   // ขนาด icon ใน row
+    private static final int ITEM_H         = 26;
+    private static final int ICON_SIZE      = 18;
     private static final int HEADER_H       = 24;
     private static final int FOOTER_H       = 22;
     private static final int PADDING        = 6;
@@ -42,14 +46,19 @@ public class FastMenuScreen extends EmoteConfigScreen {
     private static final int C_DIVIDER     = 0x33AAAACC;
     private static final int C_FOOTER_BG   = 0xFF1A1A30;
     private static final int C_PAGE_TXT    = 0xFFCCCCCC;
-    private static final int C_DOT         = 0xFF6C63FF;  // fallback dot ถ้าไม่มี icon
+    private static final int C_DOT         = 0xFF6C63FF;
     private static final int C_EMPTY       = 0xFF444455;
-    private static final int C_DISABLE_LBL = 0xFFAAAAAA;
-    private static final int C_DISABLE_OFF = 0xFFFF4444;
 
     // ── warn messages ────────────────────────────────────────────────
     private static final Component WARN_NONE  = Component.translatable("emotecraft.no_server");
     private static final Component WARN_PROXY = Component.translatable("emotecraft.only_proxy");
+
+    // ── animation ────────────────────────────────────────────────────
+    /** ระยะเวลา animation (ms) */
+    private static final long ANIM_DURATION_MS = 250;
+    private long animStartTime = -1;
+    /** progress 0.0 → 1.0 */
+    private float animProgress = 0f;
 
     // ── runtime state ────────────────────────────────────────────────
     private int hoveredRow = -1;
@@ -62,6 +71,10 @@ public class FastMenuScreen extends EmoteConfigScreen {
     // ── init ─────────────────────────────────────────────────────────
     @Override
     public void init() {
+        // เริ่มจับเวลา animation ตอน screen เปิด
+        animStartTime = System.currentTimeMillis();
+        animProgress  = 0f;
+
         addRenderableWidget(
                 Button.builder(
                         Component.translatable("emotecraft.emotelist"),
@@ -75,13 +88,32 @@ public class FastMenuScreen extends EmoteConfigScreen {
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
         renderBackground(gfx);
 
+        // อัปเดต animation progress
+        if (animStartTime >= 0) {
+            long elapsed = System.currentTimeMillis() - animStartTime;
+            animProgress = Math.min(1f, (float) elapsed / ANIM_DURATION_MS);
+        }
+
+        // easeOutCubic: เริ่มเร็ว หยุดนุ่ม
+        float ease = easeOutCubic(animProgress);
+
         panelH = HEADER_H + ITEMS_PER_PAGE * ITEM_H + FOOTER_H + PADDING * 2;
         panelX = width  - PANEL_W  - MARGIN_RIGHT;
-        panelY = height - panelH   - MARGIN_BOTTOM;
+
+        // ตำแหน่ง Y เป้าหมาย
+        int targetY = height - panelH - MARGIN_BOTTOM;
+        // เริ่มต้น panel อยู่นอกจอด้านล่าง แล้ว slide ขึ้น
+        int startY  = height + 10;
+        panelY = (int) (startY + (targetY - startY) * ease);
 
         renderSidebarPanel(gfx, mouseX, mouseY);
         renderWarning(gfx);
         super.render(gfx, mouseX, mouseY, delta);
+    }
+
+    /** easeOutCubic: t=0→0, t=1→1 เร่งตอนต้น หยุดนุ่มตอนท้าย */
+    private float easeOutCubic(float t) {
+        return 1f - (float) Math.pow(1f - t, 3);
     }
 
     private void renderSidebarPanel(GuiGraphics gfx, int mouseX, int mouseY) {
@@ -93,9 +125,17 @@ public class FastMenuScreen extends EmoteConfigScreen {
 
         // ── header ──────────────────────────────────────────────────
         gfx.fill(x, y, x + w, y + HEADER_H, C_HEADER_BG);
-        gfx.fill(x + 6, y + 5, x + 15, y + 15, C_HEADER_TXT);
+
+        // logo 16x16 แทนสี่เหลี่ยมสีเหลือง
+        gfx.blit(LOGO,
+                x + 4, y + 4,       // position
+                16, 16,              // render size
+                0f, 0f,              // uv offset
+                16, 16,              // texture sample size
+                16, 16);             // texture sheet size
+
         gfx.drawString(font, Component.literal("CELESTORIA TEAM"),
-                x + 19, y + 7, C_HEADER_TXT, false);
+                x + 23, y + 7, C_HEADER_TXT, false);
 
         // ── emote rows ──────────────────────────────────────────────
         int listY = y + HEADER_H + PADDING;
@@ -118,60 +158,44 @@ public class FastMenuScreen extends EmoteConfigScreen {
             if (uuid != null) {
                 EmoteHolder holder = EmoteHolder.list.get(uuid);
 
-                // icon position: กลาง vertical ของ row
                 int iconX = x + 5;
                 int iconY = ry + (ITEM_H - ICON_SIZE) / 2;
-                int textX  = iconX + ICON_SIZE + 4;
+                int textX = iconX + ICON_SIZE + 4;
 
                 if (holder != null) {
-                    // ── ลอง render icon รูปภาพก่อน ──────────────────
                     ResourceLocation iconId = null;
                     if (((ClientConfig) EmoteInstance.config).showIcons.get()) {
                         iconId = holder.getIconIdentifier();
                     }
 
                     if (iconId != null) {
-                        // มี icon รูปภาพ → blit เหมือนที่ LegacyChooseWidget ทำ
-                        gfx.blit(iconId,
-                                iconX, iconY,
-                                ICON_SIZE, ICON_SIZE,
-                                0f, 0f,
-                                256, 256,
-                                256, 256);
+                        gfx.blit(iconId, iconX, iconY, ICON_SIZE, ICON_SIZE,
+                                0f, 0f, 256, 256, 256, 256);
                     } else {
-                        // ไม่มี icon → แสดง dot สีม่วงแทน
                         int dotPad = (ICON_SIZE - 8) / 2;
                         gfx.fill(iconX + dotPad, iconY + dotPad,
-                                iconX + dotPad + 8, iconY + dotPad + 8,
-                                C_DOT);
+                                iconX + dotPad + 8, iconY + dotPad + 8, C_DOT);
                     }
 
-                    // ── ชื่อ emote ───────────────────────────────────
-                    // holder.name เป็น Component field ตรงๆ
                     gfx.drawString(font, holder.name,
                             textX, ry + (ITEM_H - 8) / 2, C_ITEM_TXT, false);
 
                 } else {
-                    // uuid มีแต่หา holder ไม่เจอ
                     int dotPad = (ICON_SIZE - 8) / 2;
                     gfx.fill(iconX + dotPad, iconY + dotPad,
-                            iconX + dotPad + 8, iconY + dotPad + 8,
-                            C_EMPTY);
+                            iconX + dotPad + 8, iconY + dotPad + 8, C_EMPTY);
                     gfx.drawString(font, Component.literal("???"),
                             textX, ry + (ITEM_H - 8) / 2, C_EMPTY, false);
                 }
 
             } else {
-                // slot ว่าง
                 int iconX = x + 5;
                 int iconY = ry + (ITEM_H - ICON_SIZE) / 2;
                 int dotPad = (ICON_SIZE - 8) / 2;
                 gfx.fill(iconX + dotPad, iconY + dotPad,
-                        iconX + dotPad + 8, iconY + dotPad + 8,
-                        C_EMPTY);
+                        iconX + dotPad + 8, iconY + dotPad + 8, C_EMPTY);
                 gfx.drawString(font, Component.literal("—"),
-                        iconX + ICON_SIZE + 4, ry + (ITEM_H - 8) / 2,
-                        C_EMPTY, false);
+                        iconX + ICON_SIZE + 4, ry + (ITEM_H - 8) / 2, C_EMPTY, false);
             }
         }
 
@@ -183,16 +207,6 @@ public class FastMenuScreen extends EmoteConfigScreen {
         int pw = font.width(pageStr);
         gfx.drawString(font, Component.literal(pageStr),
                 x + (w - pw) / 2, fy + 6, C_PAGE_TXT, false);
-
-        // ── Disable Emote badge ──────────────────────────────────────
-        int bx = x;
-        int by = y + panelH + 3;
-        int lblW = font.width("Disable Emote: ");
-        gfx.fill(bx, by, bx + w, by + 14, 0xFF1A1A30);
-        gfx.drawString(font, Component.literal("Disable Emote: "),
-                bx + 6, by + 3, C_DISABLE_LBL, false);
-        gfx.drawString(font, Component.literal("OFF"),
-                bx + 6 + lblW, by + 3, C_DISABLE_OFF, false);
     }
 
     private void renderWarning(GuiGraphics gfx) {
@@ -212,7 +226,6 @@ public class FastMenuScreen extends EmoteConfigScreen {
         if (button == 0) {
             int page = ModernChooseWheel.fastMenuPage;
 
-            // footer → เปลี่ยนหน้า
             int fy = panelY + HEADER_H + PADDING + ITEMS_PER_PAGE * ITEM_H;
             if (mouseX >= panelX && mouseX <= panelX + PANEL_W
                     && mouseY >= fy && mouseY <= fy + FOOTER_H) {
@@ -224,7 +237,6 @@ public class FastMenuScreen extends EmoteConfigScreen {
                 return true;
             }
 
-            // row → เล่น emote
             if (hoveredRow >= 0) {
                 UUID uuid = ((ClientConfig) EmoteInstance.config).fastMenuEmotes[page][hoveredRow];
                 if (uuid != null) {
